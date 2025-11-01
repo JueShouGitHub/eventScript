@@ -20,7 +20,11 @@ RN+Dex 升级事件方案
 ```typescript
   //还需要引入这个，动态获取当前app的包名
   import DeviceInfo from 'react-native-device-info';
+
+  //声明一个变量 获取appID
+  let appId = DeviceInfo.getBundleId();
   
+  //更新useEffect方法
   useEffect(() => {
     console.log('初始化');
     //这里的url 需要手动输入 这部分：www.skidu.xyz
