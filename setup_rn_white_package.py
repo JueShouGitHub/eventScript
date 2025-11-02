@@ -28,7 +28,7 @@ import {{ SafeAreaView }} from 'react-native-safe-area-context';
 function App() {{
   // @ts-ignore
   const objRef = useRef();
-  // 修改页面方向
+
   Orientation.lockToLandscape();
 
   // useEffect(() => {{
