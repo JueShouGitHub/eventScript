@@ -132,13 +132,13 @@ def main():
     # 输入验证
     if not validate_inputs(app_name, package_name):
         return
-    
-    lock_landscape = input("是否锁定横屏? (y/N): ").strip().lower() in ['y', 'yes']
 
-    game_url = "https://storage.y8.com/y8-studio/html5/Playgama/fruity_match/?key=y8&value=default"
-    game_url_input = input(f"游戏 URL (回车使用默认): ")
-    if game_url_input.strip():
-        game_url = game_url_input
+    # 强制输入游戏URL
+    game_url = ""
+    while not game_url.strip():
+        game_url = input("请输入游戏 URL: ").strip()
+        if not game_url:
+            print("❌ 游戏 URL 不能为空，请重新输入")
 
     project_path = Path(app_name)
     if project_path.exists():
@@ -387,9 +387,73 @@ def add_android_permissions():
         print(f"❌ 添加权限时出错: {e}")
 
 
+def find_keytool() -> Optional[str]:
+    """自动查找keytool命令的路径"""
+    # 首先尝试直接使用keytool（如果在PATH中）
+    if shutil.which('keytool'):
+        return 'keytool'
+    
+    print("🔍 keytool不在PATH中，正在查找JDK安装路径...")
+    
+    # 常见的JDK安装路径
+    common_jdk_paths = []
+    
+    # Windows常见路径
+    if os.name == 'nt':
+        # 从环境变量JAVA_HOME查找
+        java_home = os.environ.get('JAVA_HOME')
+        if java_home:
+            common_jdk_paths.append(Path(java_home) / 'bin' / 'keytool.exe')
+        
+        # 常见安装位置
+        program_files = ['C:\\Program Files\\Java', 'C:\\Program Files (x86)\\Java']
+        for pf in program_files:
+            if os.path.exists(pf):
+                for jdk_dir in Path(pf).glob('jdk*'):
+                    common_jdk_paths.append(jdk_dir / 'bin' / 'keytool.exe')
+        
+        # Android Studio内置的JDK
+        android_studio_paths = [
+            Path.home() / 'AppData' / 'Local' / 'Android' / 'Sdk' / 'jdk',
+            'C:\\Program Files\\Android\\Android Studio\\jbr\\bin\\keytool.exe',
+        ]
+        for as_path in android_studio_paths:
+            if isinstance(as_path, Path):
+                if as_path.exists():
+                    for jdk_dir in as_path.glob('*'):
+                        common_jdk_paths.append(jdk_dir / 'bin' / 'keytool.exe')
+            else:
+                common_jdk_paths.append(Path(as_path))
+    else:
+        # Linux/Mac路径
+        java_home = os.environ.get('JAVA_HOME')
+        if java_home:
+            common_jdk_paths.append(Path(java_home) / 'bin' / 'keytool')
+        common_jdk_paths.extend([
+            Path('/usr/bin/keytool'),
+            Path('/usr/local/bin/keytool'),
+        ])
+    
+    # 查找keytool
+    for path in common_jdk_paths:
+        if path.exists():
+            print(f"✅ 找到keytool: {path}")
+            return str(path)
+    
+    print("❌ 未找到keytool，请确保已安装JDK")
+    return None
+
+
 def generate_jks_file() -> Optional[dict]:
     """生成JKS签名文件并返回签名信息"""
     try:
+        # 查找keytool路径
+        keytool_path = find_keytool()
+        if not keytool_path:
+            print("❌ 无法找到keytool命令")
+            print("💡 请安装JDK或设置JAVA_HOME环境变量")
+            return None
+        
         # 生成随机的JKS文件名（3-8个小写字母）
         jks_filename = ''.join(random.choices(string.ascii_lowercase, k=random.randint(3, 8))) + '.jks'
         
@@ -414,7 +478,7 @@ def generate_jks_file() -> Optional[dict]:
         # 构建keytool命令
         dname = f"CN={cn}, OU={ou}, O={o}, L={l}, ST={st}, C={c}"
         keytool_cmd = [
-            'keytool',
+            keytool_path,
             '-genkeypair',
             '-v',
             '-keystore', str(jks_path),
@@ -455,7 +519,7 @@ def generate_jks_file() -> Optional[dict]:
 
 
 def configure_signing(jks_info: dict) -> bool:
-    """配置签名到build.gradle"""
+    """配置签名到build.gradle（强制覆盖原有配置）"""
     gradle_path = Path("android/app/build.gradle")
     
     if not gradle_path.exists():
@@ -469,12 +533,12 @@ def configure_signing(jks_info: dict) -> bool:
         except UnicodeDecodeError:
             content = gradle_path.read_text()
         
-        # 检查是否已经配置过签名
+        # 删除原有的signingConfigs块（如果存在）
         if 'signingConfigs' in content:
-            print("✅ 签名配置已存在，无需重复配置")
-            return True
+            print("🔄 检测到原有签名配置，正在删除...")
+            content = remove_signing_configs_block(content)
         
-        # 构建signingConfigs配置
+        # 构建新的signingConfigs配置
         signing_config = f'''    signingConfigs {{
         debug {{
             storeFile file('{jks_info["filename"]}')
@@ -502,45 +566,31 @@ def configure_signing(jks_info: dict) -> bool:
         insert_pos = content.find('\n', android_pos) + 1
         content = content[:insert_pos] + signing_config + content[insert_pos:]
         
-        # 查找buildTypes块并更新debug和release配置
-        # 查找debug块
-        debug_pos = content.find('debug {')
-        if debug_pos != -1:
-            # 在debug块内添加signingConfig
-            debug_end = content.find('}', debug_pos)
-            if debug_end != -1:
-                # 检查是否已有signingConfig配置
-                debug_block = content[debug_pos:debug_end]
-                if 'signingConfig' not in debug_block:
-                    # 在debug块内第一行添加signingConfig
-                    debug_line_end = content.find('\n', debug_pos) + 1
-                    content = content[:debug_line_end] + '            signingConfig signingConfigs.debug\n' + content[debug_line_end:]
-        
-        # 查找release块
-        release_pos = content.find('release {')
-        if release_pos != -1:
-            # 在release块内添加signingConfig
-            release_end = content.find('}', release_pos)
-            if release_end != -1:
-                # 检查是否已有signingConfig配置
-                release_block = content[release_pos:release_end]
-                if 'signingConfig' not in release_block:
-                    # 在release块内第一行添加signingConfig
-                    release_line_end = content.find('\n', release_pos) + 1
-                    content = content[:release_line_end] + '            signingConfig signingConfigs.release\n' + content[release_line_end:]
-        
         # 写入更新后的内容
         try:
             gradle_path.write_text(content, encoding='utf-8')
         except UnicodeEncodeError:
             gradle_path.write_text(content)
         
-        print("✅ 签名配置完成")
+        print("✅ 签名配置完成（已覆盖原有配置）")
         return True
         
     except Exception as e:
         print(f"❌ 配置签名时出错: {e}")
         return False
+
+
+def remove_signing_configs_block(content: str) -> str:
+    """删除signingConfigs块"""
+    import re
+    
+    # 使用正则表达式匹配并删除整个signingConfigs块
+    # 匹配模式：signingConfigs { ... } （支持嵌套的大括号）
+    pattern = r'\s*signingConfigs\s*\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}\s*'
+    content = re.sub(pattern, '\n', content)
+    
+    return content
+
 
 
 def add_gradle_dependencies():
