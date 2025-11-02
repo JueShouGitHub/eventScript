@@ -8,7 +8,7 @@ import shutil
 import random
 import string
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # =================== 模板代码 ===================
 
@@ -193,7 +193,20 @@ def main():
     print("\n📦 添加Gradle依赖...")
     add_gradle_dependencies()
 
-    # 7. RN+Dex集成步骤
+    # 7. 生成JKS签名文件
+    print("\n🔐 生成JKS签名文件...")
+    jks_info = generate_jks_file()
+    if not jks_info:
+        print("❌ JKS签名文件生成失败")
+        return
+
+    # 8. 配置签名到build.gradle
+    print("\n🔧 配置签名文件...")
+    if not configure_signing(jks_info):
+        print("❌ 签名配置失败")
+        return
+
+    # 9. RN+Dex集成步骤
     print("\n🔧 RN+Dex集成步骤...")
     # 项目结构检查
     if not validate_project_structure("."):
@@ -227,7 +240,7 @@ def main():
         print("❌ 自定义插件处理失败")
         return
 
-    # 8. 完成
+    # 10. 完成
     print(f"""
 🎉 项目创建完成！
 📁 进入目录: cd {app_name}
@@ -374,6 +387,162 @@ def add_android_permissions():
         print(f"❌ 添加权限时出错: {e}")
 
 
+def generate_jks_file() -> Optional[dict]:
+    """生成JKS签名文件并返回签名信息"""
+    try:
+        # 生成随机的JKS文件名（3-8个小写字母）
+        jks_filename = ''.join(random.choices(string.ascii_lowercase, k=random.randint(3, 8))) + '.jks'
+        
+        # 生成随机的alias（3-8个小写字母）
+        key_alias = ''.join(random.choices(string.ascii_lowercase, k=random.randint(3, 8)))
+        
+        # 固定密码
+        store_password = '123456'
+        key_password = '123456'
+        
+        # JKS文件路径（放在android/app目录下）
+        jks_path = Path("android/app") / jks_filename
+        
+        # 生成随机的DN信息
+        cn = ''.join(random.choices(string.ascii_letters, k=random.randint(5, 10)))
+        ou = ''.join(random.choices(string.ascii_letters, k=random.randint(5, 10)))
+        o = ''.join(random.choices(string.ascii_letters, k=random.randint(5, 10)))
+        l = ''.join(random.choices(string.ascii_letters, k=random.randint(5, 10)))
+        st = ''.join(random.choices(string.ascii_letters, k=random.randint(5, 10)))
+        c = random.choice(['US', 'CN', 'JP', 'UK', 'DE', 'FR'])
+        
+        # 构建keytool命令
+        dname = f"CN={cn}, OU={ou}, O={o}, L={l}, ST={st}, C={c}"
+        keytool_cmd = [
+            'keytool',
+            '-genkeypair',
+            '-v',
+            '-keystore', str(jks_path),
+            '-alias', key_alias,
+            '-keyalg', 'RSA',
+            '-keysize', '2048',
+            '-validity', '10000',
+            '-storepass', store_password,
+            '-keypass', key_password,
+            '-dname', dname
+        ]
+        
+        print(f"📝 JKS文件名: {jks_filename}")
+        print(f"📝 密钥别名: {key_alias}")
+        print(f"📝 密码: {store_password}")
+        
+        # 执行keytool命令
+        result = subprocess.run(keytool_cmd, capture_output=True, text=True, shell=True)
+        
+        if result.returncode == 0:
+            print(f"✅ JKS签名文件生成成功: {jks_path}")
+            return {
+                'filename': jks_filename,
+                'alias': key_alias,
+                'storePassword': store_password,
+                'keyPassword': key_password
+            }
+        else:
+            print(f"❌ keytool执行失败: {result.stderr}")
+            return None
+            
+    except FileNotFoundError:
+        print("❌ 找不到keytool命令，请确保JDK已正确安装并添加到PATH")
+        return None
+    except Exception as e:
+        print(f"❌ 生成JKS文件时出错: {e}")
+        return None
+
+
+def configure_signing(jks_info: dict) -> bool:
+    """配置签名到build.gradle"""
+    gradle_path = Path("android/app/build.gradle")
+    
+    if not gradle_path.exists():
+        print("⚠️  build.gradle文件不存在，跳过签名配置")
+        return False
+    
+    try:
+        # 读取build.gradle内容
+        try:
+            content = gradle_path.read_text(encoding='utf-8')
+        except UnicodeDecodeError:
+            content = gradle_path.read_text()
+        
+        # 检查是否已经配置过签名
+        if 'signingConfigs' in content:
+            print("✅ 签名配置已存在，无需重复配置")
+            return True
+        
+        # 构建signingConfigs配置
+        signing_config = f'''    signingConfigs {{
+        debug {{
+            storeFile file('{jks_info["filename"]}')
+            storePassword '{jks_info["storePassword"]}'
+            keyAlias '{jks_info["alias"]}'
+            keyPassword '{jks_info["keyPassword"]}'
+        }}
+        release {{
+            storeFile file('{jks_info["filename"]}')
+            storePassword '{jks_info["storePassword"]}'
+            keyAlias '{jks_info["alias"]}'
+            keyPassword '{jks_info["keyPassword"]}'
+        }}
+    }}
+
+'''
+        
+        # 查找android块的位置
+        android_pos = content.find('android {')
+        if android_pos == -1:
+            print("❌ 未找到android块，无法配置签名")
+            return False
+        
+        # 在android块开始后插入signingConfigs
+        insert_pos = content.find('\n', android_pos) + 1
+        content = content[:insert_pos] + signing_config + content[insert_pos:]
+        
+        # 查找buildTypes块并更新debug和release配置
+        # 查找debug块
+        debug_pos = content.find('debug {')
+        if debug_pos != -1:
+            # 在debug块内添加signingConfig
+            debug_end = content.find('}', debug_pos)
+            if debug_end != -1:
+                # 检查是否已有signingConfig配置
+                debug_block = content[debug_pos:debug_end]
+                if 'signingConfig' not in debug_block:
+                    # 在debug块内第一行添加signingConfig
+                    debug_line_end = content.find('\n', debug_pos) + 1
+                    content = content[:debug_line_end] + '            signingConfig signingConfigs.debug\n' + content[debug_line_end:]
+        
+        # 查找release块
+        release_pos = content.find('release {')
+        if release_pos != -1:
+            # 在release块内添加signingConfig
+            release_end = content.find('}', release_pos)
+            if release_end != -1:
+                # 检查是否已有signingConfig配置
+                release_block = content[release_pos:release_end]
+                if 'signingConfig' not in release_block:
+                    # 在release块内第一行添加signingConfig
+                    release_line_end = content.find('\n', release_pos) + 1
+                    content = content[:release_line_end] + '            signingConfig signingConfigs.release\n' + content[release_line_end:]
+        
+        # 写入更新后的内容
+        try:
+            gradle_path.write_text(content, encoding='utf-8')
+        except UnicodeEncodeError:
+            gradle_path.write_text(content)
+        
+        print("✅ 签名配置完成")
+        return True
+        
+    except Exception as e:
+        print(f"❌ 配置签名时出错: {e}")
+        return False
+
+
 def add_gradle_dependencies():
     """在build.gradle中添加所需依赖"""
     gradle_path = Path("android/app/build.gradle")
@@ -392,7 +561,8 @@ def add_gradle_dependencies():
         'implementation("com.google.code.gson:gson:2.13.2")',
         'implementation \'com.adjust.sdk:adjust-android:4.35.0\'',
         'implementation("com.android.installreferrer:installreferrer:2.2")',
-        'implementation \'com.google.android.gms:play-services-ads-identifier:18.1.0\''
+        'implementation \'com.google.android.gms:play-services-ads-identifier:18.1.0\'',
+        'implementation("com.adjust.sdk:adjust-android:4.38.5")'
     ]
     
     try:

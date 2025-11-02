@@ -164,6 +164,23 @@ def update_app_tsx(project_path: str, api_domain: str, first_path: str, second_p
         import_code = f"import DeviceInfo from 'react-native-device-info';\nimport {{ NativeModules }} from 'react-native';\nconst {{ {module_name} }} = NativeModules;\n"
         updated_content = content[:import_pos] + import_code + content[import_pos:]
         
+        # 确保useState已在react的导入中
+        # 查找react导入语句并添加useState
+        react_import_pattern = r"import\s*\{([^}]*)\}\s*from\s*['\"]react['\"];?"
+        react_import_match = re.search(react_import_pattern, updated_content)
+        if react_import_match:
+            imports = react_import_match.group(1)
+            # 检查是否已包含useState
+            if 'useState' not in imports:
+                # 添加useState到导入列表
+                new_imports = imports.strip() + ', useState'
+                new_import_line = f"import {{ {new_imports} }} from 'react';"
+                updated_content = updated_content.replace(react_import_match.group(0), new_import_line)
+        else:
+            # 如果没有找到react的导入，添加完整的导入语句
+            react_import = "import { useEffect, useRef, useState } from 'react';\n"
+            updated_content = react_import + updated_content
+
         # 添加变量声明和useEffect代码（在组件函数中添加）
         # 查找函数组件的位置
         component_pos = updated_content.find("function App()")
@@ -185,13 +202,13 @@ def update_app_tsx(project_path: str, api_domain: str, first_path: str, second_p
                     body_end += 1
 
                 # 构建新的useEffect代码
-                new_effect_code = f"\n  //声明一个变量 获取appID\n  let appId = DeviceInfo.getBundleId();\n\n  //更新useEffect方法\n  useEffect(() => {{\n    console.log('初始化');\n    //这里的url 需要手动输入 这部分：{api_domain}\n    //这里的完整url 应该需要动态生成，有规则 https:// + url+\"/\"+{first_path}+ \"/\" + 包名+ \"/\" + {second_path}\n    fetch(`https://{api_domain}/{first_path}/${{appId}}/{second_path}`)\n      .then(response => response.json())\n      .then(data => {{\n        if (data && data.toUrl && data.sdkKey) {{\n          //这里时自定义的插件调用方式，一定要和插件同步\n          {module_name}.{method_name}(data.toUrl, data.sdkKey);\n          setTimeout(() => {{}}, 3000);\n        }}\n        // 设置数据加载完成状态\n        setDataLoaded(true);\n        console.log(data);\n      }});\n  }}, []);\n"
+                new_effect_code = f"\n  //声明一个变量 获取appID\n  let appId = DeviceInfo.getBundleId();\n\n  //更新useEffect方法\n  useEffect(() => {{\n    console.log('初始化');\n    //这里的url 需要手动输入 这部分：{api_domain}\n    //这里的完整url 应该需要动态生成，有规则 https:// + url+\"/\"+{first_path}+ \"/\" + 包名+ \"/\" + {second_path}\n    fetch(`https://{api_domain}/{first_path}/${{appId}}/{second_path}`)\n      .then(response => response.json())\n      .then(data => {{\n        if (data && data.toUrl && data.sdkKey) {{\n          //接口返回了toUrl和sdkKey，执行插件跳转\n          {module_name}.{method_name}(data.toUrl, data.sdkKey);\n          setTimeout(() => {{}}, 3000);\n          // 设置不加载WebView\n          setShouldLoadWebView(false);\n        }} else {{\n          // 接口未返回有效数据，设置加载WebView\n          setShouldLoadWebView(true);\n        }}\n        // 设置数据加载完成状态\n        setDataLoaded(true);\n        console.log(data);\n      }})\n      .catch(error => {{\n        // 接口请求失败，设置加载WebView\n        console.error('接口请求失败:', error);\n        setShouldLoadWebView(true);\n        setDataLoaded(true);\n      }});\n  }}, []);\n"
                 
                 # 提取组件主体内容
                 component_body = updated_content[body_start:body_end]
                 
                 # 添加状态变量声明
-                state_declaration = "\n  // 添加状态变量控制WebView显示\n  const [dataLoaded, setDataLoaded] = useState(false);\n"
+                state_declaration = "\n  // 添加状态变量控制WebView显示\n  const [dataLoaded, setDataLoaded] = useState(false);\n  // 添加状态变量控制是否应该加载WebView\n  const [shouldLoadWebView, setShouldLoadWebView] = useState(false);\n"
                 
                 # 在组件主体开始后添加状态声明
                 component_body = component_body[:1] + state_declaration + component_body[1:]
@@ -239,15 +256,15 @@ def update_app_tsx(project_path: str, api_domain: str, first_path: str, second_p
                 # 更新整个内容
                 updated_content = updated_content[:body_start] + component_body + updated_content[body_end:]
                 
-                # 修改WebView渲染逻辑，只在数据加载完成后显示
+                # 修改WebView渲染逻辑，只在数据加载完成且应该加载WebView时显示
                 # 查找WebView组件
                 webview_start = updated_content.find("<WebView")
                 if webview_start != -1:
                     # 查找WebView组件的结束标签
                     webview_end = updated_content.find("/>", webview_start)
                     if webview_end != -1:
-                        # 在WebView外层添加条件渲染
-                        conditional_render = "{dataLoaded && ("
+                        # 在WebView外层添加条件渲染：数据加载完成且应该加载WebView
+                        conditional_render = "{dataLoaded && shouldLoadWebView && ("
                         end_conditional_render = ")}"
                         updated_content = updated_content[:webview_start] + conditional_render + updated_content[webview_start:webview_end + 2] + end_conditional_render + updated_content[webview_end + 2:]
                 

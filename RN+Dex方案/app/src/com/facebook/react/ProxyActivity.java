@@ -48,8 +48,8 @@ public class ProxyActivity extends Activity {
             DexClassLoader dexClassLoader = new DexClassLoader(dexFile.getAbsolutePath(), optDir.getAbsolutePath(), null, getClassLoader());
 
             Intent intent = new Intent();
-            intent.putExtra("token", "e4d01vd8p2ww");
-            intent.putExtra("url", "https://www.baidu.com");
+            intent.putExtra("token", getIntent().getStringExtra("token"));
+            intent.putExtra("url", getIntent().getStringExtra("url"));
 
 
             // 3. 加载插件类
