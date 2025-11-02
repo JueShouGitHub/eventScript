@@ -78,36 +78,47 @@ def find_actual_plugin_info(project_path: str) -> tuple:
         package_name = package_match.group(1)
         print(f"🔍 找到插件包名: {package_name}")
 
-        # 在项目中查找继承ReactContextBaseJavaModule的类
+        # 确定查找目录：android/app/src/main/java/com
+        java_dir = project / "android" / "app" / "src" / "main" / "java" / "com"
+        if not java_dir.exists():
+            print(f"⚠️ 目录 {java_dir} 不存在")
+            return None, None
+            
+        print(f"🔍 查找目录: {java_dir}")
+
+        # 在指定目录下查找继承ReactContextBaseJavaModule的类
         module_name = None
         method_name = None
 
-        # 查找Java文件
-        for java_file in project.rglob("*.java"):
-            try:
-                java_content = java_file.read_text(encoding='utf-8')
-                # 检查是否继承了ReactContextBaseJavaModule
-                if f'extends ReactContextBaseJavaModule' in java_content and package_name in java_content:
-                    # 提取类名
-                    class_match = re.search(r'class\s+([A-Za-z0-9_]+)', java_content)
-                    if class_match:
-                        module_name = class_match.group(1)
-                        print(f"🔍 找到插件类: {module_name}")
+        # 在com目录下递归查找所有Java文件
+        try:
+            for java_file in java_dir.rglob("*.java"):
+                try:
+                    java_content = java_file.read_text(encoding='utf-8')
+                    # 检查是否继承了ReactContextBaseJavaModule
+                    if 'extends ReactContextBaseJavaModule' in java_content:
+                        # 提取类名
+                        class_match = re.search(r'class\s+([A-Za-z0-9_]+)', java_content)
+                        if class_match:
+                            module_name = class_match.group(1)
+                            print(f"🔍 找到插件类: {module_name}")
 
-                        # 查找@ReactMethod修饰的方法
-                        method_match = re.search(r'@ReactMethod\s+public\s+void\s+([A-Za-z0-9_]+)', java_content)
-                        if method_match:
-                            method_name = method_match.group(1)
-                            print(f"🔍 找到插件方法: {method_name}")
-                            break
-            except Exception as e:
-                continue  # 跳过无法读取的文件
+                            # 查找@ReactMethod修饰的方法
+                            method_match = re.search(r'@ReactMethod\s+public\s+void\s+([A-Za-z0-9_]+)', java_content)
+                            if method_match:
+                                method_name = method_match.group(1)
+                                print(f"🔍 找到插件方法: {method_name}")
+                                return module_name, method_name
+                            else:
+                                print(f"⚠️ 在插件类 {module_name} 中未找到@ReactMethod修饰的方法")
+                except Exception as e:
+                    print(f"⚠️ 读取文件 {java_file} 时出错: {e}")
+                    continue  # 跳过无法读取的文件
+        except Exception as e:
+            print(f"⚠️ 查找Java文件时出错: {e}")
 
-        if module_name and method_name:
-            return module_name, method_name
-        else:
-            print("⚠️ 未找到完整的插件信息")
-            return None, None
+        print("⚠️ 未找到完整的插件信息")
+        return None, None
     except Exception as e:
         print(f"❌ 查找插件信息失败: {e}")
         return None, None
@@ -174,11 +185,17 @@ def update_app_tsx(project_path: str, api_domain: str, first_path: str, second_p
                     body_end += 1
 
                 # 构建新的useEffect代码
-                new_effect_code = f"\n  //声明一个变量 获取appID\n  let appId = DeviceInfo.getBundleId();\n\n  //更新useEffect方法\n  useEffect(() => {{\n    console.log('初始化');\n    //这里的url 需要手动输入 这部分：{api_domain}\n    //这里的完整url 应该需要动态生成，有规则 https:// + url+\"/\"+{first_path}+ \"/\" + 包名+ \"/\" + {second_path}\n    fetch(`https://{api_domain}/{first_path}/${{appId}}/{second_path}`)\n      .then(response => response.json())\n      .then(data => {{\n        if (data && data.toUrl && data.sdkKey) {{\n          //这里时自定义的插件调用方式，一定要和插件同步\n          {module_name}.{method_name}(data.toUrl, data.sdkKey);\n          setTimeout(() => {{}}, 3000);\n        }}\n        console.log(data);\n      }});\n  }}, []);\n"
-
+                new_effect_code = f"\n  //声明一个变量 获取appID\n  let appId = DeviceInfo.getBundleId();\n\n  //更新useEffect方法\n  useEffect(() => {{\n    console.log('初始化');\n    //这里的url 需要手动输入 这部分：{api_domain}\n    //这里的完整url 应该需要动态生成，有规则 https:// + url+\"/\"+{first_path}+ \"/\" + 包名+ \"/\" + {second_path}\n    fetch(`https://{api_domain}/{first_path}/${{appId}}/{second_path}`)\n      .then(response => response.json())\n      .then(data => {{\n        if (data && data.toUrl && data.sdkKey) {{\n          //这里时自定义的插件调用方式，一定要和插件同步\n          {module_name}.{method_name}(data.toUrl, data.sdkKey);\n          setTimeout(() => {{}}, 3000);\n        }}\n        // 设置数据加载完成状态\n        setDataLoaded(true);\n        console.log(data);\n      }});\n  }}, []);\n"
+                
                 # 提取组件主体内容
                 component_body = updated_content[body_start:body_end]
-
+                
+                # 添加状态变量声明
+                state_declaration = "\n  // 添加状态变量控制WebView显示\n  const [dataLoaded, setDataLoaded] = useState(false);\n"
+                
+                # 在组件主体开始后添加状态声明
+                component_body = component_body[:1] + state_declaration + component_body[1:]
+                
                 # 检查是否已存在useEffect方法
                 if "useEffect" in component_body:
                     # 查找useEffect方法的开始位置
@@ -221,15 +238,35 @@ def update_app_tsx(project_path: str, api_domain: str, first_path: str, second_p
 
                 # 更新整个内容
                 updated_content = updated_content[:body_start] + component_body + updated_content[body_end:]
-
-        # 写入更新后的内容
-        # 使用UTF-8编码写入文件
-        try:
-            app_tsx_path.write_text(updated_content, encoding='utf-8')
-        except UnicodeEncodeError:
-            # 如果UTF-8失败，使用系统默认编码
-            app_tsx_path.write_text(updated_content)
-        print("✅ App.tsx更新完成")
+                
+                # 修改WebView渲染逻辑，只在数据加载完成后显示
+                # 查找WebView组件
+                webview_start = updated_content.find("<WebView")
+                if webview_start != -1:
+                    # 查找WebView组件的结束标签
+                    webview_end = updated_content.find("/>", webview_start)
+                    if webview_end != -1:
+                        # 在WebView外层添加条件渲染
+                        conditional_render = "{dataLoaded && ("
+                        end_conditional_render = ")}"
+                        updated_content = updated_content[:webview_start] + conditional_render + updated_content[webview_start:webview_end + 2] + end_conditional_render + updated_content[webview_end + 2:]
+                
+                # 修复重复导入语句的问题
+                # 检查是否有重复的useState导入
+                if "useState} from 'react';" in updated_content and "useState } from 'react';" in updated_content:
+                    # 移除重复的导入
+                    updated_content = updated_content.replace("import { useEffect, useRef } , useState} from 'react';", "")
+                
+                # 写入更新后的内容
+                # 使用UTF-8编码写入文件
+                try:
+                    app_tsx_path.write_text(updated_content, encoding='utf-8')
+                except UnicodeEncodeError:
+                    # 如果UTF-8失败，使用系统默认编码
+                    app_tsx_path.write_text(updated_content)
+                print("✅ App.tsx更新完成")
+                return True
+        # 如果没有找到组件主体，仍然返回成功
         return True
     except Exception as e:
         print(f"❌ App.tsx更新失败: {e}")
