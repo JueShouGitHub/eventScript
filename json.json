@@ -1,0 +1,15 @@
+{
+    "currency":"BRL",
+    "event":{
+        "login":"",
+        "register":"i9kjob",
+        "firstrecharge":"16mi4p",
+        "recharge":""
+    }
+}
+
+
+21:30:34.650  D  来自 JS 的消息: saveLoginInfo；参数：{"loginType":"","acc":"","pass":"","ch":"61577","sd":"6","device_id":"d1f7c9fcb3616946adidnull"}
+21:30:43.162  D  来自 JS 的消息: openWindow；参数：{"url":"https://t.me/VVIP77AT"}
+21:32:58.467  D  来自 JS 的消息: saveLoginInfo；参数：{"loginType":"Phone","acc":"11999998888","pass":"Qq1111111","ch":"61577","sd":"6","device_id":"d1f7c9fcb3616946adidnull"}
+21:32:59.015  D  来自 JS 的消息: saveLoginInfo；参数：{"loginType":"Phone","acc":"11999998888","pass":"Qq1111111","token":"i9o1urtdhw48ds9g20zhlvycmnusmraternmsuvg","ch":"61577","sd":"6","device_id":"d1f7c9fcb3616946adidnull"}

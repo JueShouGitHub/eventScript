@@ -38,9 +38,9 @@ function App() {{
     <SafeAreaView style={{styles.container}}>
       <StatusBar hidden={{true}} />
       <WebView
-        source={{{{
+        source={{
           uri: '{GAME_URL}',
-        }}}}
+        }}
         style={{styles.container}}
       />
     </SafeAreaView>
